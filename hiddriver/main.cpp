@@ -337,9 +337,10 @@ HID_ReportItem_t* FindButtonItem(
 // Find the report ID that carries gamepad information
 // Returns 0 when the device doesn't use report IDs.
 uint8_t FindGamepadReportId(HID_ReportInfo_t* info) {
-	if (!info->UsingReportIDs)
+	if (!info || !info->UsingReportIDs)
 		return 0;
 
+	// Prefer the report containing axes, as before.
 	for (HID_ReportItem_t* item = info->FirstReportItem; item; item = item->Next) {
 		if (item->ItemType != HID_REPORT_ITEM_In)
 			continue;
@@ -349,6 +350,16 @@ uint8_t FindGamepadReportId(HID_ReportInfo_t* info) {
 		if (u >= HID_USAGE_AXIS_X && u <= HID_USAGE_AXIS_RZ)
 			return item->ReportID;
 	}
+
+	// Some HID devices (including instrument controllers) report only buttons
+	// and/or vendor-defined data. Do not silently select report ID 0 when the
+	// device uses report IDs: fall back to the first input report with buttons.
+	for (HID_ReportItem_t* item = info->FirstReportItem; item; item = item->Next) {
+		if (item->ItemType == HID_REPORT_ITEM_In &&
+			item->Attributes.Usage.Page == HID_USAGE_PAGE_BUTTON)
+			return item->ReportID;
+	}
+
 	return 0;
 }
 
