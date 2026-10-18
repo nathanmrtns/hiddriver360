@@ -27,6 +27,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release Retail|Xbox 360'">
+    <OutDir>$(ProjectDir)$(Configuration)\\</OutDir>
+    <IntDir>$(ProjectDir)$(Configuration)\\obj\\</IntDir>
     <IncludePath>.\xkelib;.\;$(IncludePath)</IncludePath>
     <LinkIncremental>false</LinkIncremental>
     <PostBuildEventUseInBuild>false</PostBuildEventUseInBuild>
