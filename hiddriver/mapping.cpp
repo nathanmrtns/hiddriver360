@@ -35,6 +35,18 @@ static const HidButtonMapEntry kPlayStationButtonMapping[] = {
     { 12, &ButtonsReport::xbox     },
 };
 
+static const HidButtonMapEntry kRockBand3DrumButtonMapping[] = {
+    { 0,  &ButtonsReport::x_button }, // Square / blue
+    { 1,  &ButtonsReport::a_button }, // Cross / green
+    { 2,  &ButtonsReport::b_button }, // Circle / red
+    { 3,  &ButtonsReport::y_button }, // Triangle / yellow
+    { 4,  &ButtonsReport::l1       }, // Kick pedal
+    { 8,  &ButtonsReport::back     }, // Select
+    { 9,  &ButtonsReport::start    }, // Start
+    { 10, &ButtonsReport::l3       }, // Pad marker
+    { 11, &ButtonsReport::r3       }, // Cymbal marker
+};
+
 static const HidButtonMapEntry kDualShock3ButtonMapping[] = {
     { 14,  &ButtonsReport::a_button    },
     { 13,  &ButtonsReport::b_button   },
@@ -113,12 +125,16 @@ static HidDeviceMapping kStaticDeviceMappings[] = {
     },
 
     // Rock Band 3 PS3 wireless drum kit dongle (97710), VID:PID 12BA:0210.
-    // This is a best-effort generic button mapping; drum velocities and native
-    // Rock Band instrument semantics are not represented by ButtonsReport yet.
+    // Captured reports show button usages 1-4 identify colors, usage 11 marks
+    // pads, usage 12 marks cymbals, usage 5 is the kick, usage 9 is Select,
+    // and usage 10 is Start. Map pad/cymbal markers to L3/R3 so hits become
+    // face-button + L3/R3 combinations.
+    // This remains standard gamepad output; velocity and native RB instrument
+    // semantics are not represented by ButtonsReport.
     {
         0x12BA, 0x0210,
         kDefaultAxisMap, sizeof(kDefaultAxisMap) / sizeof(kDefaultAxisMap[0]),
-        kPlayStationButtonMapping, sizeof(kPlayStationButtonMapping) / sizeof(kPlayStationButtonMapping[0]),
+        kRockBand3DrumButtonMapping, sizeof(kRockBand3DrumButtonMapping) / sizeof(kRockBand3DrumButtonMapping[0]),
         {false, true, false, false, false, true},
     },
 };
