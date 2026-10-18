@@ -111,6 +111,16 @@ static HidDeviceMapping kStaticDeviceMappings[] = {
         kPlayStationButtonMapping, sizeof(kPlayStationButtonMapping) / sizeof(kPlayStationButtonMapping[0]),
         {false, true, false, false, false, true},
     },
+
+    // Rock Band 3 PS3 wireless drum kit dongle (97710), VID:PID 12BA:0210.
+    // This is a best-effort generic button mapping; drum velocities and native
+    // Rock Band instrument semantics are not represented by ButtonsReport yet.
+    {
+        0x12BA, 0x0210,
+        kDefaultAxisMap, sizeof(kDefaultAxisMap) / sizeof(kDefaultAxisMap[0]),
+        kPlayStationButtonMapping, sizeof(kPlayStationButtonMapping) / sizeof(kPlayStationButtonMapping[0]),
+        {false, true, false, false, false, true},
+    },
 };
 
 std::vector<HidDeviceMapping> g_dynamicMappings;
