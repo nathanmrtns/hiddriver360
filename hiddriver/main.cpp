@@ -65,7 +65,28 @@ void FlushLog() {
 		return;
 	if (written - g_logFlushed > LOG_LINES)
 		g_logFlushed = written - LOG_LINES;
-	std::ofstream file("HDD:\\hiddriver.log", std::ios::app);
+	static const char* paths[] = {
+		"HDD:\\hiddriver.log",
+		"\\Device\\Harddisk0\\Partition1\\hiddriver.log",
+		"\\Device\\Mass0\\hiddriver.log",
+		"\\Device\\Mass1\\hiddriver.log",
+	};
+	static int s_pathIdx = -1;
+	std::ofstream file;
+	if (s_pathIdx >= 0) {
+		file.open(paths[s_pathIdx], std::ios::app);
+	} else {
+		// First write: use the first path that opens, and record which one it was
+		for (int i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+			file.open(paths[i], std::ios::app);
+			if (file.is_open()) {
+				s_pathIdx = i;
+				file << "log path: " << paths[i] << "\r\n";
+				break;
+			}
+			file.clear();
+		}
+	}
 	if (!file.is_open())
 		return;
 	for (; g_logFlushed < written; g_logFlushed++)
@@ -1739,6 +1760,8 @@ BOOL APIENTRY DllMain(HANDLE Handle, DWORD Reason, PVOID Reserved) {
 			HidAddDeviceDetour = Detour((void*)0x800E4D68, (void*)HidAddDeviceHook); // 7D 88 02 A6 ? ? ? ? 94 21 ? ? 7C 7B 1B 78 ? ? ? ? 7C 7F 1B 79
 			HidRemoveDeviceDetour = Detour((void*)0x800E4D28, (void*)HidRemoveDeviceHook); // 81 63 ? ? 39 40 ? ? 39 20 ? ? 99 4B
 		}
+
+		FileLog("hiddriver loaded (log build 2), devkit=%d\r\n", (int)isDevkit);
 
 		HidAddDeviceDetour.Install();
 		HidRemoveDeviceDetour.Install();
