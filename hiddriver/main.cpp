@@ -1775,7 +1775,8 @@ BOOL APIENTRY DllMain(HANDLE Handle, DWORD Reason, PVOID Reserved) {
 			HidRemoveDeviceDetour = Detour((void*)0x800E4D28, (void*)HidRemoveDeviceHook); // 81 63 ? ? 39 40 ? ? 39 20 ? ? 99 4B
 		}
 
-		FileLog("hiddriver loaded (log build 2), devkit=%d\r\n", (int)isDevkit);
+		FileLog("hiddriver loaded (log build 4), devkit=%d\r\n", (int)isDevkit);
+		FlushLog();
 
 		HidAddDeviceDetour.Install();
 		HidRemoveDeviceDetour.Install();
@@ -1799,6 +1800,8 @@ BOOL APIENTRY DllMain(HANDLE Handle, DWORD Reason, PVOID Reserved) {
 
 		UsbdDriverEntry();
 		DbgPrint("EINTIM: USB driver reset complete.\n");
+		FileLog("USB driver reset complete\r\n");
+		FlushLog();
 
 		// Start mapping manager thread
 		MakeThread((LPTHREAD_START_ROUTINE)MappingManagerThreadProc, nullptr);
