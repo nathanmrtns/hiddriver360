@@ -855,9 +855,15 @@ void HidFillButtonsReport(
 unsigned int __stdcall MappingThreadProc(void* param);
 unsigned int __stdcall MappingManagerThreadProc(void* param){
 	// This thread monitors for controllers needing mapping and spawns mapping threads
-	Sleep(10000);
-	XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 3 running");
+	DWORD lastNotify = GetTickCount();
+	int notifyCount = 0;
 	while (true) {
+		// Boot-time notifications can be dropped before the UI is up, so repeat for a while
+		if (notifyCount < 10 && GetTickCount() - lastNotify >= 30000) {
+			lastNotify = GetTickCount();
+			notifyCount++;
+			XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 4 running");
+		}
 		for (int i = 0; i < 4; i++) {
 			// Check if controller exists, has reportInfo, but no mapping, and mapping not already in progress
 			if (connectedControllers[i].controllerDriver &&
