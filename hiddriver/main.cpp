@@ -66,10 +66,9 @@ void FlushLog() {
 	if (written - g_logFlushed > LOG_LINES)
 		g_logFlushed = written - LOG_LINES;
 	static const char* paths[] = {
+		"Hdd1:\\hiddriver.log",
+		"Usb0:\\hiddriver.log",
 		"HDD:\\hiddriver.log",
-		"\\Device\\Harddisk0\\Partition1\\hiddriver.log",
-		"\\Device\\Mass0\\hiddriver.log",
-		"\\Device\\Mass1\\hiddriver.log",
 	};
 	static int s_pathIdx = -1;
 	std::ofstream file;
