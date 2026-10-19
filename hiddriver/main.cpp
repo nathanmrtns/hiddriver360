@@ -1203,6 +1203,15 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 				connectedControllers[index].reportId,
 				connectedControllers[index].sonyUsage,
 				connectedControllers[index].map);
+
+			// PS3 RB drums send velocity as pressure bytes (11 yellow, 12 red, 13 green, 14 blue; per PlasticBand 0 = hardest, 0xFF = softest).
+			// Xbox 360 kits send it on the sticks with the same inverted range: red LX, yellow LY, blue RX, green RY.
+			if (connectedControllers[index].vendorId == 0x12BA && connectedControllers[index].productId == 0x0210) {
+				buttonReport.x = (int16_t)((payload[12] * 0x7FFF) / 0xFF);
+				buttonReport.y = (int16_t)(-1 - (payload[11] * 0x7FFF) / 0xFF);
+				buttonReport.z = (int16_t)((payload[14] * 0x7FFF) / 0xFF);
+				buttonReport.rz = (int16_t)(-1 - (payload[13] * 0x7FFF) / 0xFF);
+			}
 		}
 		else if (g_mappingState.active && g_mappingState.controllerIndex == index) {
 			// Collect raw button states during mapping - only check discovered buttons
@@ -1451,7 +1460,7 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 
 		static int s_capsCount = 0;
 		if (s_capsCount++ < 10 || s_capsCount % 100 == 0) {
-			DbgPrint("EINTIM: caps query (build 10, no FFB flag) user=%d flags=%x subtype=%x map=%p\n",
+			DbgPrint("EINTIM: caps query (build 11, velocity on sticks) user=%d flags=%x subtype=%x map=%p\n",
 				user, flags, c->map ? c->map->subType : -1, c->map);
 		}
 
@@ -1574,12 +1583,15 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		}
 		s_readsLogged++;
 
-		// Drum kits carry hit velocity on the sticks and rest at 0; the HID stick axes here idle at a constant offset instead
+		// Drum kits carry hit velocity on the sticks and rest at 0; generic HID axes idle at a constant offset instead.
+		// The RB dongle fills the sticks with real velocity in interruptHandler, so leave those alone.
 		if (c->map && c->map->subType == XINPUT_DEVSUBTYPE_DRUM_KIT) {
-			pInputData->sThumbLX = 0;
-			pInputData->sThumbLY = 0;
-			pInputData->sThumbRX = 0;
-			pInputData->sThumbRY = 0;
+			if (!(c->vendorId == 0x12BA && c->productId == 0x0210)) {
+				pInputData->sThumbLX = 0;
+				pInputData->sThumbLY = 0;
+				pInputData->sThumbRX = 0;
+				pInputData->sThumbRY = 0;
+			}
 			pInputData->bLeftTrigger = 0;
 			pInputData->bRightTrigger = 0;
 		}
