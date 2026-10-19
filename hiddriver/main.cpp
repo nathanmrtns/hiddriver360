@@ -1460,10 +1460,14 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		capabilities->SubType = c->map->subType;
 		capabilities->Flags = c->map->flags;
 
-		XINPUT_STATE state;
-		memset(&state, 0, sizeof(XINPUT_STATE));
-		XInputGetState(user, &state);
-		capabilities->Gamepad = state.Gamepad;
+		// Real controllers report which inputs they support here, not the current state; some games (RB3) seem to use it to filter input
+		capabilities->Gamepad.wButtons = 0xF3FF;
+		capabilities->Gamepad.bLeftTrigger = 0xFF;
+		capabilities->Gamepad.bRightTrigger = 0xFF;
+		capabilities->Gamepad.sThumbLX = -64;
+		capabilities->Gamepad.sThumbLY = -64;
+		capabilities->Gamepad.sThumbRX = -64;
+		capabilities->Gamepad.sThumbRY = -64;
 		capabilities->Vibration.wLeftMotorSpeed = 0;
 		capabilities->Vibration.wRightMotorSpeed = 0;
 		return ERROR_SUCCESS;
