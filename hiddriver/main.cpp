@@ -1252,6 +1252,22 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 			}
 		}
 
+		// Print drum dongle input only when it changes, to see what the console receives per hit
+		if (connectedControllers[index].vendorId == 0x12BA) {
+			static uint8_t lastRaw[15];
+			if (memcmp(lastRaw, payload, sizeof(lastRaw)) != 0) {
+				memcpy(lastRaw, payload, sizeof(lastRaw));
+				DbgPrint("EINTIM: raw %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+					payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7],
+					payload[8], payload[9], payload[10], payload[11], payload[12], payload[13], payload[14]);
+				DbgPrint("EINTIM: xbox A%d B%d X%d Y%d L1:%d R1:%d L3:%d R3:%d up%d dn%d back%d start%d hat%d(%d)\n",
+					buttonReport.a_button, buttonReport.b_button, buttonReport.x_button, buttonReport.y_button,
+					buttonReport.l1, buttonReport.r1, buttonReport.l3, buttonReport.r3,
+					buttonReport.dpad_up, buttonReport.dpad_down, buttonReport.back, buttonReport.start,
+					buttonReport.hatSwitch, buttonReport.has_hat_switch);
+			}
+		}
+
 		connectedControllers[index].currentState = buttonReport;
 	}
 
