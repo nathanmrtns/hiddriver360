@@ -81,13 +81,20 @@ void FlushLog() {
 			if (file.is_open()) {
 				s_pathIdx = i;
 				file << "log path: " << paths[i] << "\r\n";
+				static const PWCHAR msgs[] = {
+					L"hiddriver: logging to Hdd1:", L"hiddriver: logging to Usb0:", L"hiddriver: logging to HDD:" };
+				XNotifyUI(XNOTIFYUI_CUSTOM, msgs[i]);
 				break;
 			}
 			file.clear();
 		}
 	}
-	if (!file.is_open())
+	if (!file.is_open()) {
+		static int s_failCount = 0;
+		if (++s_failCount == 30)
+			XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: cannot open any log file");
 		return;
+	}
 	for (; g_logFlushed < written; g_logFlushed++)
 		file << g_logLines[g_logFlushed % LOG_LINES];
 	file.flush();
@@ -848,6 +855,8 @@ void HidFillButtonsReport(
 unsigned int __stdcall MappingThreadProc(void* param);
 unsigned int __stdcall MappingManagerThreadProc(void* param){
 	// This thread monitors for controllers needing mapping and spawns mapping threads
+	Sleep(10000);
+	XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 3 running");
 	while (true) {
 		for (int i = 0; i < 4; i++) {
 			// Check if controller exists, has reportInfo, but no mapping, and mapping not already in progress
