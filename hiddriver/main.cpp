@@ -862,7 +862,7 @@ unsigned int __stdcall MappingManagerThreadProc(void* param){
 		if (notifyCount < 10 && GetTickCount() - lastNotify >= 30000) {
 			lastNotify = GetTickCount();
 			notifyCount++;
-			XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 4 running");
+			XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 5 running");
 		}
 		for (int i = 0; i < 4; i++) {
 			// Check if controller exists, has reportInfo, but no mapping, and mapping not already in progress
@@ -1775,8 +1775,7 @@ BOOL APIENTRY DllMain(HANDLE Handle, DWORD Reason, PVOID Reserved) {
 			HidRemoveDeviceDetour = Detour((void*)0x800E4D28, (void*)HidRemoveDeviceHook); // 81 63 ? ? 39 40 ? ? 39 20 ? ? 99 4B
 		}
 
-		FileLog("hiddriver loaded (log build 4), devkit=%d\r\n", (int)isDevkit);
-		FlushLog();
+		FileLog("hiddriver loaded (log build 5), devkit=%d\r\n", (int)isDevkit);
 
 		HidAddDeviceDetour.Install();
 		HidRemoveDeviceDetour.Install();
@@ -1800,8 +1799,6 @@ BOOL APIENTRY DllMain(HANDLE Handle, DWORD Reason, PVOID Reserved) {
 
 		UsbdDriverEntry();
 		DbgPrint("EINTIM: USB driver reset complete.\n");
-		FileLog("USB driver reset complete\r\n");
-		FlushLog();
 
 		// Start mapping manager thread
 		MakeThread((LPTHREAD_START_ROUTINE)MappingManagerThreadProc, nullptr);
