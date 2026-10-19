@@ -1451,7 +1451,7 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 
 		static int s_capsCount = 0;
 		if (s_capsCount++ < 10 || s_capsCount % 100 == 0) {
-			DbgPrint("EINTIM: caps query (build 9, zero drum sticks) user=%d flags=%x subtype=%x map=%p\n",
+			DbgPrint("EINTIM: caps query (build 10, no FFB flag) user=%d flags=%x subtype=%x map=%p\n",
 				user, flags, c->map ? c->map->subType : -1, c->map);
 		}
 
