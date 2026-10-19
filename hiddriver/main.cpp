@@ -1451,7 +1451,7 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 
 		static int s_capsCount = 0;
 		if (s_capsCount++ < 10 || s_capsCount % 100 == 0) {
-			DbgPrint("EINTIM: caps query (build 8, zero sticks) user=%d flags=%x subtype=%x map=%p\n",
+			DbgPrint("EINTIM: caps query (build 9, zero drum sticks) user=%d flags=%x subtype=%x map=%p\n",
 				user, flags, c->map ? c->map->subType : -1, c->map);
 		}
 
@@ -1564,14 +1564,25 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		pInputData->bLeftTrigger = b.rx ? b.rx : (b.l2 ? 255 : 0);
 		pInputData->bRightTrigger = b.ry ? b.ry : (b.r2 ? 255 : 0);
 
-		// Log the first reads and every change in buttons, to see whether a game reads this controller at all
+		// Log every change in buttons plus a periodic heartbeat, with the sticks as the game would see them before any override
 		static int s_readsLogged = 0;
 		static WORD s_lastButtons = 0;
 		if (pInputData->wButtons != s_lastButtons || s_readsLogged % 2000 == 0) {
-			DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x\n", dwDeviceContext, c->userIndex, pInputData->wButtons);
+			DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x sticks=%d,%d,%d,%d\n", dwDeviceContext, c->userIndex,
+				pInputData->wButtons, pInputData->sThumbLX, pInputData->sThumbLY, pInputData->sThumbRX, pInputData->sThumbRY);
 			s_lastButtons = pInputData->wButtons;
 		}
 		s_readsLogged++;
+
+		// Drum kits carry hit velocity on the sticks and rest at 0; the HID stick axes here idle at a constant offset instead
+		if (c->map && c->map->subType == XINPUT_DEVSUBTYPE_DRUM_KIT) {
+			pInputData->sThumbLX = 0;
+			pInputData->sThumbLY = 0;
+			pInputData->sThumbRX = 0;
+			pInputData->sThumbRY = 0;
+			pInputData->bLeftTrigger = 0;
+			pInputData->bRightTrigger = 0;
+		}
 
 		if (pdwPacketNumber)
 			*pdwPacketNumber = ++c->packetNumber;
