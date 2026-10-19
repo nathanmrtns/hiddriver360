@@ -1449,9 +1449,8 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		if (!c)
 			return status;
 
-		static int s_capsLogged = 0;
-		if (s_capsLogged < 40) {
-			s_capsLogged++;
+		static int s_capsCount = 0;
+		if (s_capsCount++ < 10 || s_capsCount % 100 == 0) {
 			DbgPrint("EINTIM: caps query (build 8, zero sticks) user=%d flags=%x subtype=%x map=%p\n",
 				user, flags, c->map ? c->map->subType : -1, c->map);
 		}
@@ -1568,12 +1567,11 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		// Log the first reads and every change in buttons, to see whether a game reads this controller at all
 		static int s_readsLogged = 0;
 		static WORD s_lastButtons = 0;
-		if (s_readsLogged < 10 || pInputData->wButtons != s_lastButtons) {
-			if (s_readsLogged < 200)
-				DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x\n", dwDeviceContext, c->userIndex, pInputData->wButtons);
-			s_readsLogged++;
+		if (pInputData->wButtons != s_lastButtons || s_readsLogged % 2000 == 0) {
+			DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x\n", dwDeviceContext, c->userIndex, pInputData->wButtons);
 			s_lastButtons = pInputData->wButtons;
 		}
+		s_readsLogged++;
 
 		if (pdwPacketNumber)
 			*pdwPacketNumber = ++c->packetNumber;
