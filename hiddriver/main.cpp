@@ -1452,7 +1452,7 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		static int s_capsLogged = 0;
 		if (s_capsLogged < 40) {
 			s_capsLogged++;
-			DbgPrint("EINTIM: caps query user=%d flags=%x subtype=%x map=%p\n",
+			DbgPrint("EINTIM: caps query (build 8, zero sticks) user=%d flags=%x subtype=%x map=%p\n",
 				user, flags, c->map ? c->map->subType : -1, c->map);
 		}
 
@@ -1460,14 +1460,15 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		capabilities->SubType = c->map->subType;
 		capabilities->Flags = c->map->flags;
 
-		// Real controllers report which inputs they support here, not the current state; some games (RB3) seem to use it to filter input
+		// Real controllers report which inputs they support here, not the current state.
+		// On drum kits the stick fields double as hardware IDs, and RB1 kits leave them all zero.
 		capabilities->Gamepad.wButtons = 0xF3FF;
-		capabilities->Gamepad.bLeftTrigger = 0xFF;
-		capabilities->Gamepad.bRightTrigger = 0xFF;
-		capabilities->Gamepad.sThumbLX = -64;
-		capabilities->Gamepad.sThumbLY = -64;
-		capabilities->Gamepad.sThumbRX = -64;
-		capabilities->Gamepad.sThumbRY = -64;
+		capabilities->Gamepad.bLeftTrigger = 0;
+		capabilities->Gamepad.bRightTrigger = 0;
+		capabilities->Gamepad.sThumbLX = 0;
+		capabilities->Gamepad.sThumbLY = 0;
+		capabilities->Gamepad.sThumbRX = 0;
+		capabilities->Gamepad.sThumbRY = 0;
 		capabilities->Vibration.wLeftMotorSpeed = 0;
 		capabilities->Vibration.wRightMotorSpeed = 0;
 		return ERROR_SUCCESS;
