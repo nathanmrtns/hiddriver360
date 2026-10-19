@@ -1,5 +1,6 @@
 #include <xtl.h>
 #include <xkelib.h>
+#include <stdarg.h>
 #include <string>
 #include <fstream>
 #include <time.h>
@@ -40,6 +41,37 @@ HANDLE MakeThread(LPTHREAD_START_ROUTINE Address, PVOID arg) {
 }
 
 void XNotifyUI(XNOTIFYQUEUEUI_TYPE Type, PWCHAR String) { XNotifyQueueUI(Type, XUSER_INDEX_ANY, XNOTIFYUI_PRIORITY_DEFAULT, String, 0); }
+
+// Debug log to HDD:\hiddriver.log. USB callbacks may run at elevated IRQL where file I/O is unsafe,
+// so lines are queued in memory and written out by FlushLog() from a normal thread.
+#define LOG_LINES 256
+#define LOG_LINE_LEN 192
+static char g_logLines[LOG_LINES][LOG_LINE_LEN];
+static volatile LONG g_logWritten = 0;
+static LONG g_logFlushed = 0;
+
+void FileLog(const char* fmt, ...) {
+	LONG slot = (InterlockedIncrement(&g_logWritten) - 1) % LOG_LINES;
+	va_list args;
+	va_start(args, fmt);
+	_vsnprintf(g_logLines[slot], LOG_LINE_LEN - 1, fmt, args);
+	va_end(args);
+	g_logLines[slot][LOG_LINE_LEN - 1] = 0;
+}
+
+void FlushLog() {
+	LONG written = g_logWritten;
+	if (written == g_logFlushed)
+		return;
+	if (written - g_logFlushed > LOG_LINES)
+		g_logFlushed = written - LOG_LINES;
+	std::ofstream file("HDD:\\hiddriver.log", std::ios::app);
+	if (!file.is_open())
+		return;
+	for (; g_logFlushed < written; g_logFlushed++)
+		file << g_logLines[g_logFlushed % LOG_LINES];
+	file.flush();
+}
 
 struct UsbTrb {
 	DWORD endpoint;
@@ -416,6 +448,7 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 
 	if (status != 0) {
 		DbgPrint("EINTIM: Control transfer failed with status %x!\n", status);
+		FileLog("FAIL: control transfer status=%x state=%d\r\n", status, (int)g_InitState);
 		g_InitState = INIT_FAILED;
 		return status;
 	}
@@ -430,6 +463,7 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 		
 		if (hidDescriptorBuffer.wDescriptorLength == 0) {
 			DbgPrint("EINTIM: ERROR - HID descriptor length is 0!\n");
+			FileLog("FAIL: HID report descriptor length is 0\r\n");
 			g_InitState = INIT_FAILED;
 			return -1;
 		}
@@ -464,11 +498,10 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 		c.reportInfo = reportInfo;
 		c.reportId = FindGamepadReportId(reportInfo);
 
-		DbgPrint("EINTIM: Parsed descriptor. UsingReportIDs: %d, Report ID: %d\r\n",
-			(int)reportInfo->UsingReportIDs, c.reportId);
-
+		FileLog("report descriptor parse result=%d reportInfo=%p\r\n", parseResult, reportInfo);
 		if (parseResult != HID_PARSE_Successful || !reportInfo) {
 			DbgPrint("EINTIM: Failed to parse HID descriptor: error %d\r\n", parseResult);
+			FileLog("FAIL: HID descriptor parse error %d\r\n", parseResult);
 			g_InitState = InitState::INIT_FAILED;
 			free(reportDescriptorBuffer);
 			return -1;
@@ -481,6 +514,8 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 
 		DbgPrint("EINTIM: Parsed descriptor. UsingReportIDs: %d, Report ID: %d, Sony Usage: %04x\r\n",
 			(int)reportInfo->UsingReportIDs, c.reportId, c.sonyUsage);
+		FileLog("parsed descriptor: UsingReportIDs=%d reportId=%d sonyUsage=%04x map=%p\r\n",
+			(int)reportInfo->UsingReportIDs, c.reportId, c.sonyUsage, c.map);
 
 		free(reportDescriptorBuffer);
 
@@ -512,8 +547,13 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 	if (g_InitState == InitState::INIT_DONE) {
 		usb_endpoint_descriptor* endpoint_descriptor = UsbdGetEndpointDescriptor(
 			controllerDriver->deviceHandle, 0, USB_ENDPOINT_TYPE_INTERRUPT, USB_DIRECTION_IN);
+		FileLog("interrupt IN endpoint descriptor=%p\r\n", endpoint_descriptor);
+		if (!endpoint_descriptor) {
+			FileLog("FAIL: no interrupt IN endpoint\r\n");
+			return -1;
+		}
 
-		status = UsbdOpenEndpoint(
+		status =UsbdOpenEndpoint(
 			controllerDriver->deviceHandle,
 			3,
 			endpoint_descriptor->bEndpointAddress,
@@ -545,6 +585,8 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 		connectedControllers[globalIndex] = c;
 
 		DbgPrint("EINTIM: Registered virtual controller inside XAM with index: %d.\n", userIndex);
+		FileLog("registered virtual controller userIndex=%d vid=%04x pid=%04x map=%p\r\n",
+			userIndex, c.vendorId, c.productId, c.map);
 
 		if (NeedsDualshock3Handshake(c.vendorId, c.productId)) {
 			DbgPrint("EINTIM: Sending dualshock3 handshake!\r\n");
@@ -814,7 +856,8 @@ unsigned int __stdcall MappingManagerThreadProc(void* param){
 				}
 			}
 		}
-		Sleep(100); 
+		FlushLog();
+		Sleep(100);
 	}
 	return 0;
 }
@@ -1094,6 +1137,16 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 		driverExtension->deviceHandle->driver->cleanupDone)
 		return 0;
 
+	// Log the first few raw reports so the layout can be compared with the parsed descriptor
+	static int s_rawLogged = 0;
+	if (s_rawLogged < 8) {
+		s_rawLogged++;
+		const uint8_t* raw = (const uint8_t*)report;
+		FileLog("raw report: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\r\n",
+			raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+			raw[8], raw[9], raw[10], raw[11], raw[12], raw[13]);
+	}
+
 	int index = -1;
 	for (int i = 0; i < (sizeof(connectedControllers) / sizeof(Controller)); i++) {
 		if (connectedControllers[i].controllerDriver == driverExtension) {
@@ -1324,6 +1377,10 @@ int HidAddDeviceHook(deviceHandle* deviceHandle) {
 	DbgPrint("EINTIM: IS USB1.0: %d\n", isOhci);
 	DbgPrint("EINTIM: USB device descriptor Pointer: %p\n", device_descriptor);
 	DbgPrint("EINTIM: HID device vendor id: %x, product id: %x\n", vendorId, productId);
+	FileLog("HidAddDevice vid=%04x pid=%04x speed=%d class=%02x sub=%02x proto=%02x ifnum=%d\r\n",
+		vendorId, productId, speed, interface_descriptor->bInterfaceClass,
+		interface_descriptor->bInterfaceSubClass, interface_descriptor->bInterfaceProtocol,
+		interface_descriptor->bInterfaceNumber);
 
 	if (interface_descriptor->bInterfaceClass == 0x03 &&
 		interface_descriptor->bInterfaceSubClass == 0 &&
@@ -1365,6 +1422,7 @@ int HidAddDeviceHook(deviceHandle* deviceHandle) {
 		c.productId = productId;
 		c.sonyUsage = 0;
 		c.map = FindMapping(vendorId, productId);
+		FileLog("FindMapping(%04x,%04x) -> %p\r\n", vendorId, productId, c.map);
 		c.nintendo_handshake_state = NINTENDO_HANDSHAKE_STATE::INITIAL;
 
 		HidControllerExtension* controllerDriver = new HidControllerExtension();
@@ -1404,6 +1462,7 @@ int HidAddDeviceHook(deviceHandle* deviceHandle) {
 	}
 
 	DbgPrint("EINTIM: Unrelated USB Device. Calling original...\n");
+	FileLog("Unrelated USB device (class/subclass/protocol rejected), passing to original\r\n");
 	return HidAddDeviceDetour.GetOriginal<decltype(&HidAddDeviceHook)>()(deviceHandle);
 }
 
