@@ -855,11 +855,13 @@ void HidFillButtonsReport(
 unsigned int __stdcall MappingThreadProc(void* param);
 unsigned int __stdcall MappingManagerThreadProc(void* param){
 	// This thread monitors for controllers needing mapping and spawns mapping threads
-	DWORD lastNotify = GetTickCount();
+	DWORD startTick = GetTickCount();
+	DWORD lastNotify = startTick;
 	int notifyCount = 0;
 	while (true) {
-		// Boot-time notifications can be dropped before the UI is up, so repeat for a while
-		if (notifyCount < 10 && GetTickCount() - lastNotify >= 30000) {
+		// Leave notifications and log file I/O alone during early boot; touching them before the UI and drives are up can hang initialization
+		bool bootSettled = GetTickCount() - startTick >= 60000;
+		if (bootSettled && notifyCount < 10 && GetTickCount() - lastNotify >= 30000) {
 			lastNotify = GetTickCount();
 			notifyCount++;
 			XNotifyUI(XNOTIFYUI_CUSTOM, L"hiddriver: log build 5 running");
@@ -891,7 +893,8 @@ unsigned int __stdcall MappingManagerThreadProc(void* param){
 				}
 			}
 		}
-		FlushLog();
+		if (bootSettled)
+			FlushLog();
 		Sleep(100);
 	}
 	return 0;
