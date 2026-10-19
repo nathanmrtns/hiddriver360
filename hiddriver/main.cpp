@@ -1252,22 +1252,6 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 			}
 		}
 
-		// Print drum dongle input only when it changes, to see what the console receives per hit
-		if (connectedControllers[index].vendorId == 0x12BA) {
-			static uint8_t lastRaw[15];
-			if (memcmp(lastRaw, payload, sizeof(lastRaw)) != 0) {
-				memcpy(lastRaw, payload, sizeof(lastRaw));
-				DbgPrint("EINTIM: raw %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-					payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7],
-					payload[8], payload[9], payload[10], payload[11], payload[12], payload[13], payload[14]);
-				DbgPrint("EINTIM: xbox A%d B%d X%d Y%d L1:%d R1:%d L3:%d R3:%d up%d dn%d back%d start%d hat%d(%d)\n",
-					buttonReport.a_button, buttonReport.b_button, buttonReport.x_button, buttonReport.y_button,
-					buttonReport.l1, buttonReport.r1, buttonReport.l3, buttonReport.r3,
-					buttonReport.dpad_up, buttonReport.dpad_down, buttonReport.back, buttonReport.start,
-					buttonReport.hatSwitch, buttonReport.has_hat_switch);
-			}
-		}
-
 		connectedControllers[index].currentState = buttonReport;
 	}
 
@@ -1465,6 +1449,13 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		if (!c)
 			return status;
 
+		static int s_capsLogged = 0;
+		if (s_capsLogged < 40) {
+			s_capsLogged++;
+			DbgPrint("EINTIM: caps query user=%d flags=%x subtype=%x map=%p\n",
+				user, flags, c->map ? c->map->subType : -1, c->map);
+		}
+
 		capabilities->Type = XINPUT_DEVTYPE_GAMEPAD;
 		capabilities->SubType = c->map->subType;
 		capabilities->Flags = c->map->flags;
@@ -1477,6 +1468,8 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		capabilities->Vibration.wRightMotorSpeed = 0;
 		return ERROR_SUCCESS;
 	}
+
+	return status;
 }
 
 NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXINPUT_GAMEPAD pInputData, PBOOL unk) {
@@ -1566,6 +1559,16 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		pInputData->sThumbLY = b.y;
 		pInputData->bLeftTrigger = b.rx ? b.rx : (b.l2 ? 255 : 0);
 		pInputData->bRightTrigger = b.ry ? b.ry : (b.r2 ? 255 : 0);
+
+		// Log the first reads and every change in buttons, to see whether a game reads this controller at all
+		static int s_readsLogged = 0;
+		static WORD s_lastButtons = 0;
+		if (s_readsLogged < 10 || pInputData->wButtons != s_lastButtons) {
+			if (s_readsLogged < 200)
+				DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x\n", dwDeviceContext, c->userIndex, pInputData->wButtons);
+			s_readsLogged++;
+			s_lastButtons = pInputData->wButtons;
+		}
 
 		if (pdwPacketNumber)
 			*pdwPacketNumber = ++c->packetNumber;
