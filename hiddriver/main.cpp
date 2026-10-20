@@ -1458,12 +1458,6 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 		if (!c)
 			return status;
 
-		static int s_capsCount = 0;
-		if (s_capsCount++ < 10 || s_capsCount % 100 == 0) {
-			DbgPrint("EINTIM: caps query (build 11, velocity on sticks) user=%d flags=%x subtype=%x map=%p\n",
-				user, flags, c->map ? c->map->subType : -1, c->map);
-		}
-
 		capabilities->Type = XINPUT_DEVTYPE_GAMEPAD;
 		capabilities->SubType = c->map->subType;
 		capabilities->Flags = c->map->flags;
@@ -1572,16 +1566,6 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		pInputData->sThumbLY = b.y;
 		pInputData->bLeftTrigger = b.rx ? b.rx : (b.l2 ? 255 : 0);
 		pInputData->bRightTrigger = b.ry ? b.ry : (b.r2 ? 255 : 0);
-
-		// Log every change in buttons plus a periodic heartbeat, with the sticks as the game would see them before any override
-		static int s_readsLogged = 0;
-		static WORD s_lastButtons = 0;
-		if (pInputData->wButtons != s_lastButtons || s_readsLogged % 2000 == 0) {
-			DbgPrint("EINTIM: read ctx=%x user=%d buttons=%04x sticks=%d,%d,%d,%d\n", dwDeviceContext, c->userIndex,
-				pInputData->wButtons, pInputData->sThumbLX, pInputData->sThumbLY, pInputData->sThumbRX, pInputData->sThumbRY);
-			s_lastButtons = pInputData->wButtons;
-		}
-		s_readsLogged++;
 
 		// Drum kits carry hit velocity on the sticks and rest at 0; generic HID axes idle at a constant offset instead.
 		// The RB dongle fills the sticks with real velocity in interruptHandler, so leave those alone.
