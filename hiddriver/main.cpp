@@ -112,6 +112,7 @@ enum InitState
 {
 	INIT_SET_CONFIGURATION,
 	INIT_GET_REPORT_DESCRIPTOR,
+	INIT_GET_PS_CAPABILITIES_DESCRIPTOR,
 	INIT_DONE,
 	INIT_FAILED
 };
@@ -224,6 +225,10 @@ enum DS3_FEATURE_VALUE
 
 };
 // dualshock 3 specific end
+enum PS_FEATURE_VALUE
+{
+	PSFeatureCapabilities = 0x0303
+};
 
 typedef usb_device_descriptor* (*usb_device_descriptor_func_t)(deviceHandle* handle);
 typedef usb_interface_descriptor* (*usb_interface_descriptor_func_t)(deviceHandle* handle);
@@ -269,6 +274,7 @@ struct Controller {
 	uint32_t deviceContext;
 	uint16_t vendorId;
 	uint16_t productId;
+	uint16_t sonyUsage;
 	uint32_t packetNumber;
 	HID_ReportInfo_t* reportInfo;
 	uint8_t reportId;
@@ -296,6 +302,7 @@ struct MappingState {
 Controller connectedControllers[4];
 Controller c;
 usb_hid_descriptor hidDescriptorBuffer;
+uint8_t psFeatureBuffer[48];
 int globalIndex = -1;
 void* reportDescriptorBuffer;
 MappingState g_mappingState;
@@ -304,7 +311,7 @@ int interruptHandler(DWORD deviceHandle, int32_t a2);
 
 // Keep every IN report item; the driver uses all axes, the hat, and buttons.
 bool CALLBACK_HIDParser_FilterHIDReportItem(HID_ReportItem_t* const CurrentItem) {
-	return (CurrentItem->ItemType == HID_REPORT_ITEM_In);
+	return (CurrentItem->ItemType == HID_REPORT_ITEM_In || CurrentItem->ItemType == HID_REPORT_ITEM_Feature);
 }
 
 HID_ReportItem_t* FindItemByUsage(
@@ -348,6 +355,17 @@ uint8_t FindGamepadReportId(HID_ReportInfo_t* info) {
 		uint16_t u = item->Attributes.Usage.Usage;
 		if (u >= HID_USAGE_AXIS_X && u <= HID_USAGE_AXIS_RZ)
 			return item->ReportID;
+	}
+	return 0;
+}
+
+uint16_t FindSonyFeatureReport(HID_ReportInfo_t* info) {
+	for (HID_ReportItem_t* item = info->FirstReportItem; item; item = item->Next) {
+		if (item->Attributes.Usage.Page != HID_USAGE_PAGE_VENDOR)
+			continue;
+		uint16_t u = item->Attributes.Usage.Usage;
+		if (u == HID_USAGE_PS3_CAPABILITIES || u == HID_USAGE_PS4_CAPABILITIES || u == HID_USAGE_PS5_CAPABILITIES)
+			return u;
 	}
 	return 0;
 }
@@ -443,12 +461,6 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 			hidDescriptorBuffer.wDescriptorLength,
 			&reportInfo);
 
-		c.reportInfo = reportInfo;
-		c.reportId = FindGamepadReportId(reportInfo);
-
-		DbgPrint("EINTIM: Parsed descriptor. UsingReportIDs: %d, Report ID: %d\r\n",
-			(int)reportInfo->UsingReportIDs, c.reportId);
-
 		if (parseResult != HID_PARSE_Successful || !reportInfo) {
 			DbgPrint("EINTIM: Failed to parse HID descriptor: error %d\r\n", parseResult);
 			g_InitState = InitState::INIT_FAILED;
@@ -456,19 +468,48 @@ int32_t setConfigurationComplete(DWORD deviceHandle, int32_t status) {
 			return -1;
 		}
 
-		DbgPrint("EINTIM: parse done stage 1\r\n");
-		g_InitState = InitState::INIT_DONE;
 
 		c.reportInfo = reportInfo;
 		c.reportId = FindGamepadReportId(reportInfo);
+		c.sonyUsage = FindSonyFeatureReport(reportInfo);
 
-		DbgPrint("EINTIM: Parsed descriptor. UsingReportIDs: %d, Report ID: %d\r\n",
-			(int)reportInfo->UsingReportIDs, c.reportId);
+		DbgPrint("EINTIM: Parsed descriptor. UsingReportIDs: %d, Report ID: %d, Sony Usage: %04x\r\n",
+			(int)reportInfo->UsingReportIDs, c.reportId, c.sonyUsage);
 
 		free(reportDescriptorBuffer);
 
+		if (c.sonyUsage && c.sonyUsage != 0x2621) {
+			DbgPrint("EINTIM: Sending PS4/5 capabilities request!\r\n");
+			g_InitState = InitState::INIT_GET_PS_CAPABILITIES_DESCRIPTOR;
+			SendControlRequest(controllerDriver->deviceHandle,
+				&controllerDriver->controlTrb,
+				0xA1,
+				0x01, 
+				PSFeatureCapabilities, 
+				0, 
+				sizeof(psFeatureBuffer), 
+				(void*)psFeatureBuffer, 
+				(DWORD)setConfigurationComplete);
+		} else {
+			DbgPrint("EINTIM: parse done stage 1\r\n");
+			g_InitState = InitState::INIT_DONE;
+		}
+	} else if (g_InitState == InitState::INIT_GET_PS_CAPABILITIES_DESCRIPTOR) {
+		DbgPrint("EINTIM: Got PS4/5 capabilities response %02x!\r\n", psFeatureBuffer[5]);
+		if (!c.map) {
+			c.map = FindStaticSonyMapping(c.sonyUsage, psFeatureBuffer[5]);
+		}
+		DbgPrint("EINTIM: parse done stage 1\r\n");
+		g_InitState = InitState::INIT_DONE;
+	}
+
+	if (g_InitState == InitState::INIT_DONE) {
 		usb_endpoint_descriptor* endpoint_descriptor = UsbdGetEndpointDescriptor(
 			controllerDriver->deviceHandle, 0, USB_ENDPOINT_TYPE_INTERRUPT, USB_DIRECTION_IN);
+		if (!endpoint_descriptor) {
+			DbgPrint("EINTIM: No interrupt IN endpoint found!\n");
+			return -1;
+		}
 
 		status = UsbdOpenEndpoint(
 			controllerDriver->deviceHandle,
@@ -601,6 +642,7 @@ void HidFillButtonsReport(
 	HID_ReportInfo_t* info,
 	ButtonsReport* out,
 	uint8_t reportId,
+	uint16_t sonyUsage,
 	const HidDeviceMapping* map) {
 	// Axes
 	const auto* axisMap = map->axisMap;
@@ -609,61 +651,65 @@ void HidFillButtonsReport(
 	for (uint8_t i = 0; i < axisCount; i++) {
 		const auto& entry = axisMap[i];
 
-		HID_ReportItem_t* item = FindItemByUsage(
-			info,
-			HID_USAGE_PAGE_GENERIC_DESKTOP,
-			entry.usage,
-			reportId
-		);
+		if (entry.raw) {
+			out->*entry.field = ((int32_t)payload[entry.raw] << 8) - 32767;
+		} else {
+			HID_ReportItem_t* item = FindItemByUsage(
+				info,
+				HID_USAGE_PAGE_GENERIC_DESKTOP,
+				entry.usage,
+				reportId
+			);
 
-		if (!item || !USB_GetHIDReportItemInfo(reportId, payload, item))
-			continue;
+			if (!item || !USB_GetHIDReportItemInfo(reportId, payload, item))
+				continue;
 
-		int32_t logMin = (int32_t)item->Attributes.Logical.Minimum;
-		int32_t logMax = (int32_t)item->Attributes.Logical.Maximum;
-		int32_t raw = (int32_t)item->Value;
+			int32_t logMin = (int32_t)item->Attributes.Logical.Minimum;
+			int32_t logMax = (int32_t)item->Attributes.Logical.Maximum;
+			int32_t raw = (int32_t)item->Value;
 
-		int32_t result = 0;
+			int32_t result = 0;
 
-		if (logMax > logMin) {
-			if (raw < logMin) raw = logMin;
-			if (raw > logMax) raw = logMax;
+			if (logMax > logMin) {
+				if (raw < logMin) raw = logMin;
+				if (raw > logMax) raw = logMax;
 
-			int64_t numerator = (int64_t)(raw - logMin) * 65535;
-			int32_t denominator = (logMax - logMin);
+				int64_t numerator = (int64_t)(raw - logMin) * 65535;
+				int32_t denominator = (logMax - logMin);
 
-			int32_t scaled = (int32_t)((numerator + denominator / 2) / denominator);
-			result = scaled - 32768;
+				int32_t scaled = (int32_t)((numerator + denominator / 2) / denominator);
+				result = scaled - 32768;
+			}
+			else {
+				result = raw;
+			}
+
+			// apply inversion
+			switch (entry.usage) {
+			case HID_USAGE_AXIS_X:
+				if (map->invert.invertX) result = -result;
+				break;
+			case HID_USAGE_AXIS_Y:
+				if (map->invert.invertY) result = -result;
+				break;
+			case HID_USAGE_AXIS_Z:
+				if (map->invert.invertZ) result = -result;
+				break;
+			case HID_USAGE_AXIS_RX:
+				if (map->invert.invertRX) result = -result;
+				break;
+			case HID_USAGE_AXIS_RY:
+				if (map->invert.invertRY) result = -result;
+				break;
+			case HID_USAGE_AXIS_RZ:
+				if (map->invert.invertRZ) result = -result;
+				break;
+			}
+
+			if (result > 32767) result = 32767; if (result < -32768) result = -32768;
+
+			out->*entry.field = (int16_t)result;
 		}
-		else {
-			result = raw;
-		}
-
-		// apply inversion
-		switch (entry.usage) {
-		case HID_USAGE_AXIS_X:
-			if (map->invert.invertX) result = -result;
-			break;
-		case HID_USAGE_AXIS_Y:
-			if (map->invert.invertY) result = -result;
-			break;
-		case HID_USAGE_AXIS_Z:
-			if (map->invert.invertZ) result = -result;
-			break;
-		case HID_USAGE_AXIS_RX:
-			if (map->invert.invertRX) result = -result;
-			break;
-		case HID_USAGE_AXIS_RY:
-			if (map->invert.invertRY) result = -result;
-			break;
-		case HID_USAGE_AXIS_RZ:
-			if (map->invert.invertRZ) result = -result;
-			break;
-		}
-
-		if (result > 32767) result = 32767; if (result < -32768) result = -32768;
-
-		out->*entry.field = (int16_t)result;
 	}
 
 	// Hat switch
@@ -680,10 +726,57 @@ void HidFillButtonsReport(
 
 	for (uint8_t i = 0; i < map->buttonMapCount; i++) {
 		const auto& entry = buttonMap[i];
-
-		HID_ReportItem_t* item = FindButtonItem(info, entry.idx, reportId);
-		if (item && USB_GetHIDReportItemInfo(reportId, payload, item)) {
-			out->*entry.field = (uint8_t)item->Value;
+		// If the index is 0xFF, its a special case and the button is always active
+		if (entry.idx == 0xFF) {
+			out->*entry.field = 1;
+		} else {
+			HID_ReportItem_t* item = FindButtonItem(info, entry.idx, reportId);
+			if (item && USB_GetHIDReportItemInfo(reportId, payload, item)) {
+				out->*entry.field = (uint8_t)item->Value;
+			}
+		}
+	}
+	
+	// PS4 RB drums need to map axis to button combinations, so its easier to do that by hand here
+	if (sonyUsage) {
+		uint8_t offset = 0;
+		if (sonyUsage == HID_USAGE_PS4_CAPABILITIES) {
+			offset = PS_RAW_EXTENDED_DATA_PS4;
+		}
+		if (sonyUsage == HID_USAGE_PS5_CAPABILITIES) {
+			offset = PS_RAW_EXTENDED_DATA_PS5;
+		}
+		if (offset) {
+			if (payload[offset+PS_EXTENDED_OFFSET_RED_PAD]) {
+				out->b_button = true;
+				out->r3 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_YELLOW_PAD]) {
+				out->y_button = true;
+				out->r3 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_BLUE_PAD]) {
+				out->x_button = true;
+				out->r3 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_GREEN_PAD]) {
+				out->a_button = true;
+				out->r3 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_YELLOW_CYM]) {
+				out->y_button = true;
+				out->dpad_up = true;
+				out->l1 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_BLUE_CYM]) {
+				out->x_button = true;
+				out->dpad_down = true;
+				out->l1 = true;
+			}
+			if (payload[offset+PS_EXTENDED_OFFSET_GREEN_CYM]) {
+				out->a_button = true;
+				out->l1 = true;
+			}
 		}
 	}
 }
@@ -915,26 +1008,32 @@ unsigned int __stdcall MappingThreadProc(void* param) {
 
 	entry.usage = HID_USAGE_AXIS_X;
 	entry.field = &ButtonsReport::x;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	entry.usage = HID_USAGE_AXIS_Y;
 	entry.field = &ButtonsReport::y;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	entry.usage = HID_USAGE_AXIS_Z;
 	entry.field = &ButtonsReport::z;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	entry.usage = HID_USAGE_AXIS_RX;
 	entry.field = &ButtonsReport::rx;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	entry.usage = HID_USAGE_AXIS_RY;
 	entry.field = &ButtonsReport::ry;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	entry.usage = HID_USAGE_AXIS_RZ;
 	entry.field = &ButtonsReport::rz;
+	entry.raw = 0;
 	mappedAxes.push_back(entry);
 
 	// Build dynamic mapping
@@ -1102,7 +1201,17 @@ int interruptHandler(DWORD deviceHandle, int32_t a2) {
 				connectedControllers[index].reportInfo,
 				&buttonReport,
 				connectedControllers[index].reportId,
+				connectedControllers[index].sonyUsage,
 				connectedControllers[index].map);
+
+			// PS3 RB drums send velocity as pressure bytes (11 yellow, 12 red, 13 green, 14 blue; per PlasticBand 0 = hardest, 0xFF = softest).
+			// Xbox 360 kits send it on the sticks with the same inverted range: red LX, yellow LY, blue RX, green RY.
+			if (connectedControllers[index].vendorId == 0x12BA && connectedControllers[index].productId == 0x0210) {
+				buttonReport.x = (int16_t)((payload[12] * 0x7FFF) / 0xFF);
+				buttonReport.y = (int16_t)(-1 - (payload[11] * 0x7FFF) / 0xFF);
+				buttonReport.z = (int16_t)((payload[14] * 0x7FFF) / 0xFF);
+				buttonReport.rz = (int16_t)(-1 - (payload[13] * 0x7FFF) / 0xFF);
+			}
 		}
 		else if (g_mappingState.active && g_mappingState.controllerIndex == index) {
 			// Collect raw button states during mapping - only check discovered buttons
@@ -1261,6 +1370,7 @@ int HidAddDeviceHook(deviceHandle* deviceHandle) {
 		c.reportInfo = nullptr;   // will be filled in INIT_GET_REPORT_DESCRIPTOR
 		c.vendorId = vendorId;
 		c.productId = productId;
+		c.sonyUsage = 0;
 		c.map = FindMapping(vendorId, productId);
 		c.nintendo_handshake_state = NINTENDO_HANDSHAKE_STATE::INITIAL;
 
@@ -1349,17 +1459,24 @@ DWORD XamInputGetCapabilitiesExHook(DWORD unk, DWORD user, DWORD flags, XINPUT_C
 			return status;
 
 		capabilities->Type = XINPUT_DEVTYPE_GAMEPAD;
-		capabilities->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
-		capabilities->Flags = 0;
+		capabilities->SubType = c->map->subType;
+		capabilities->Flags = c->map->flags;
 
-		XINPUT_STATE state;
-		memset(&state, 0, sizeof(XINPUT_STATE));
-		XInputGetState(user, &state);
-		capabilities->Gamepad = state.Gamepad;
+		// Real controllers report which inputs they support here, not the current state.
+		// On drum kits the stick fields double as hardware IDs, and RB1 kits leave them all zero.
+		capabilities->Gamepad.wButtons = 0xF3FF;
+		capabilities->Gamepad.bLeftTrigger = 0;
+		capabilities->Gamepad.bRightTrigger = 0;
+		capabilities->Gamepad.sThumbLX = 0;
+		capabilities->Gamepad.sThumbLY = 0;
+		capabilities->Gamepad.sThumbRX = 0;
+		capabilities->Gamepad.sThumbRY = 0;
 		capabilities->Vibration.wLeftMotorSpeed = 0;
 		capabilities->Vibration.wRightMotorSpeed = 0;
 		return ERROR_SUCCESS;
 	}
+
+	return status;
 }
 
 NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXINPUT_GAMEPAD pInputData, PBOOL unk) {
@@ -1433,16 +1550,15 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 				break;
 			}
 		}
-		else {
-			if(b.dpad_left)
-				pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;
-			if(b.dpad_right)
-				pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_RIGHT;
-			if(b.dpad_up)
-				pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_UP;
-			if(b.dpad_down)
-				pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_DOWN;
-		}
+		
+		if(b.dpad_left)
+			pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;
+		if(b.dpad_right)
+			pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_RIGHT;
+		if(b.dpad_up)
+			pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_UP;
+		if(b.dpad_down)
+			pInputData->wButtons |= XINPUT_GAMEPAD_DPAD_DOWN;
 		
 		pInputData->sThumbRX = b.z;
 		pInputData->sThumbRY = b.rz;
@@ -1450,6 +1566,19 @@ NTSTATUS XInputdReadStateHook(DWORD dwDeviceContext, PDWORD pdwPacketNumber, PXI
 		pInputData->sThumbLY = b.y;
 		pInputData->bLeftTrigger = b.rx ? b.rx : (b.l2 ? 255 : 0);
 		pInputData->bRightTrigger = b.ry ? b.ry : (b.r2 ? 255 : 0);
+
+		// Drum kits carry hit velocity on the sticks and rest at 0; generic HID axes idle at a constant offset instead.
+		// The RB dongle fills the sticks with real velocity in interruptHandler, so leave those alone.
+		if (c->map && c->map->subType == XINPUT_DEVSUBTYPE_DRUM_KIT) {
+			if (!(c->vendorId == 0x12BA && c->productId == 0x0210)) {
+				pInputData->sThumbLX = 0;
+				pInputData->sThumbLY = 0;
+				pInputData->sThumbRX = 0;
+				pInputData->sThumbRY = 0;
+			}
+			pInputData->bLeftTrigger = 0;
+			pInputData->bRightTrigger = 0;
+		}
 
 		if (pdwPacketNumber)
 			*pdwPacketNumber = ++c->packetNumber;
